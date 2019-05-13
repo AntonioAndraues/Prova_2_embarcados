@@ -123,6 +123,15 @@ const uint32_t BUTTON_Y = ILI9488_LCD_HEIGHT/2;
 /** Reference voltage for AFEC,in mv. */
 #define VOLT_REF        (3300)
 
+#define PIO_PWM_0 PIOA
+#define ID_PIO_PWM_0 ID_PIOA
+#define MASK_PIN_PWM_0 (1 << 0)
+
+#define PWM_FREQUENCY      1000
+/** Period value of PWM output waveform */
+#define PERIOD_VALUE       100
+
+
 /** The conversion data is done flag */
 volatile bool g_is_conversion_done = false;
 /** The conversion data value */
@@ -134,7 +143,7 @@ typedef struct {
   uint y;
 } touchData;
 
-
+pwm_channel_t g_pwm_channel_led;
 QueueHandle_t xQueueTouch;
 
 /************************************************************************/
@@ -185,6 +194,39 @@ extern void vApplicationMallocFailedHook(void)
 /************************************************************************/
 /* init                                                                 */
 /************************************************************************/
+void PWM0_init(uint channel, uint duty){
+	/* Enable PWM peripheral clock */
+	pmc_enable_periph_clk(ID_PWM0);
+
+	/* Disable PWM channels for LEDs */
+	pwm_channel_disable(PWM0, PIN_PWM_LED0_CHANNEL);
+
+	/* Set PWM clock A as PWM_FREQUENCY*PERIOD_VALUE (clock B is not used) */
+	pwm_clock_t clock_setting = {
+		.ul_clka = PWM_FREQUENCY * PERIOD_VALUE,
+		.ul_clkb = 0,
+		.ul_mck = sysclk_get_peripheral_hz()
+	};
+	
+	pwm_init(PWM0, &clock_setting);
+
+	/* Initialize PWM channel for LED0 */
+	/* Period is left-aligned */
+	g_pwm_channel_led.alignment = PWM_ALIGN_CENTER;
+	/* Output waveform starts at a low level */
+	g_pwm_channel_led.polarity = PWM_HIGH;
+	/* Use PWM clock A as source clock */
+	g_pwm_channel_led.ul_prescaler = PWM_CMR_CPRE_CLKA;
+	/* Period value of output waveform */
+	g_pwm_channel_led.ul_period = PERIOD_VALUE;
+	/* Duty cycle value of output waveform */
+	g_pwm_channel_led.ul_duty = duty;
+	g_pwm_channel_led.channel = channel;
+	pwm_channel_init(PWM0, &g_pwm_channel_led);
+	
+	/* Enable PWM channels for LEDs */
+	pwm_channel_enable(PWM0, channel);
+}
 
 static void AFEC_Temp_callback(void)
 {
@@ -466,7 +508,15 @@ void mxt_handler(struct mxt_device *device, uint *x, uint *y)
 /************************************************************************/
 /* tasks                                                                */
 /************************************************************************/
-
+void task_get_temp(void){
+  for (;;) {
+	  g_ul_value = afec_channel_get_value(AFEC0, AFEC_CHANNEL_SENSOR);
+	  g_ul_value=convert_adc_to_temp(g_ul_value);
+	  printf(g_ul_value);
+	  vTaskDelay(1000);
+  }
+  	
+}
 void task_mxt(void){
   
   	struct mxt_device device; /* Device data container */
@@ -484,7 +534,23 @@ void task_mxt(void){
      vTaskDelay(100);
 	}
 }
+void task_Pwm(void){
+ /* fad	e in */
+  const TickType_t xDelay = 10	 / portTICK_PERIOD_MS;
 
+ uint duty = g_pwm_channel_led.ul_duty;
+ for(;;){
+ for(duty = 0; duty <= 100; duty++){
+	 pwm_channel_update_duty(PWM0, &g_pwm_channel_led, 100-duty);
+	  vTaskDelay(xDelay);
+ }
+ /* fade out*/
+ for(duty = 0; duty <= 100; duty++){
+	 pwm_channel_update_duty(PWM0, &g_pwm_channel_led, duty);
+	 vTaskDelay(xDelay);
+ }
+ }
+}
 void task_lcd(void){
   xQueueTouch = xQueueCreate( 10, sizeof( touchData ) );
 	configure_lcd();
@@ -524,14 +590,26 @@ int main(void)
 
 	sysclk_init(); /* Initialize system clocks */
 	board_init();  /* Initialize board */
+	/* inicializa e configura adc */
+	//config_ADC_TEMP();
+	/* incializa conversão ADC */
+	//afec_start_software_conversion(AFEC0);
 	/* Initialize stdio on USART */
 	stdio_serial_init(USART_SERIAL_EXAMPLE, &usart_serial_options);
+	pmc_enable_periph_clk(ID_PIO_PWM_0);
+	pio_set_peripheral(PIO_PWM_0, PIO_PERIPH_A, MASK_PIN_PWM_0 );
+	
+	/* inicializa PWM com dutycicle 0*/
+	uint duty = 0;
+	PWM0_init(0, duty);
 		
   /* Create task to handler touch */
   if (xTaskCreate(task_mxt, "mxt", TASK_MXT_STACK_SIZE, NULL, TASK_MXT_STACK_PRIORITY, NULL) != pdPASS) {
     printf("Failed to create test led task\r\n");
   }
-  
+  /* Create task to temp */
+  //xTaskCreate(task_get_temp, "temp", TASK_MXT_STACK_SIZE, NULL, TASK_MXT_STACK_PRIORITY, NULL);
+  xTaskCreate(task_Pwm,"pwm", TASK_MXT_STACK_SIZE, NULL, TASK_MXT_STACK_PRIORITY, NULL);
   /* Create task to handler LCD */
   if (xTaskCreate(task_lcd, "lcd", TASK_LCD_STACK_SIZE, NULL, TASK_LCD_STACK_PRIORITY, NULL) != pdPASS) {
     printf("Failed to create test led task\r\n");
