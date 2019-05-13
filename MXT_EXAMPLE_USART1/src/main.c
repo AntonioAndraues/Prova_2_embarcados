@@ -509,11 +509,14 @@ void mxt_handler(struct mxt_device *device, uint *x, uint *y)
 /* tasks                                                                */
 /************************************************************************/
 void task_get_temp(void){
+	const TickType_t xDelay = 4000	 / portTICK_PERIOD_MS;
   for (;;) {
+	  
 	  g_ul_value = afec_channel_get_value(AFEC0, AFEC_CHANNEL_SENSOR);
 	  g_ul_value=convert_adc_to_temp(g_ul_value);
 	  printf(g_ul_value);
-	  vTaskDelay(1000);
+	  font_draw_text(&digital52, g_ul_value, 45, 360, 1); 
+	  vTaskDelay(xDelay);
   }
   	
 }
