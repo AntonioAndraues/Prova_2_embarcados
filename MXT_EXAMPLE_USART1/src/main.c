@@ -118,7 +118,17 @@ const uint32_t BUTTON_Y = ILI9488_LCD_HEIGHT/2;
 
 #define TASK_LCD_STACK_SIZE            (2*1024/sizeof(portSTACK_TYPE))
 #define TASK_LCD_STACK_PRIORITY        (tskIDLE_PRIORITY)
+#define MAX_DIGITAL     (4095)
 
+/** Reference voltage for AFEC,in mv. */
+#define VOLT_REF        (3300)
+
+/** The conversion data is done flag */
+volatile bool g_is_conversion_done = false;
+/** The conversion data value */
+volatile uint32_t g_ul_value = 0;	
+/* Canal do sensor de temperatura */
+#define AFEC_CHANNEL_SENSOR 0
 typedef struct {
   uint x;
   uint y;
@@ -176,7 +186,72 @@ extern void vApplicationMallocFailedHook(void)
 /* init                                                                 */
 /************************************************************************/
 
+static void AFEC_Temp_callback(void)
+{
+	g_ul_value = afec_channel_get_value(AFEC0, AFEC_CHANNEL_SENSOR);
+	g_is_conversion_done = true;
+}
+static int32_t convert_adc_to_temp(int32_t ADC_value){
 
+  int32_t ul_vol;
+  int32_t ul_temp;
+
+  /*
+   * converte bits -> tensão (Volts)
+   */
+	ul_vol = ADC_value * VOLT_REF / (float) MAX_DIGITAL;
+
+  /*
+   * According to datasheet, The output voltage VT = 0.72V at 27C
+   * and the temperature slope dVT/dT = 2.33 mV/C
+   */
+  ul_temp = (ul_vol - 720)  * 100 / 233 + 27;
+  return(ul_temp);
+}
+static void config_ADC_TEMP(void){
+/*************************************
+   * Ativa e configura AFEC
+   *************************************/
+  /* Ativa AFEC - 0 */
+	afec_enable(AFEC0);
+
+	/* struct de configuracao do AFEC */
+	struct afec_config afec_cfg;
+
+	/* Carrega parametros padrao */
+	afec_get_config_defaults(&afec_cfg);
+
+	/* Configura AFEC */
+	afec_init(AFEC0, &afec_cfg);
+
+	/* Configura trigger por software */
+	afec_set_trigger(AFEC0, AFEC_TRIG_SW);
+
+	/* configura call back */
+	afec_set_callback(AFEC0, AFEC_INTERRUPT_EOC_11,	AFEC_Temp_callback, 1);
+
+	/*** Configuracao específica do canal AFEC ***/
+	struct afec_ch_config afec_ch_cfg;
+	afec_ch_get_config_defaults(&afec_ch_cfg);
+	afec_ch_cfg.gain = AFEC_GAINVALUE_0;
+	afec_ch_set_config(AFEC0, AFEC_CHANNEL_SENSOR, &afec_ch_cfg);
+
+	/*
+	* Calibracao:
+	* Because the internal ADC offset is 0x200, it should cancel it and shift
+	 down to 0.
+	 */
+	afec_channel_set_analog_offset(AFEC0, AFEC_CHANNEL_SENSOR, 0x200);
+
+	/***  Configura sensor de temperatura ***/
+	struct afec_temp_sensor_config afec_temp_sensor_cfg;
+
+	afec_temp_sensor_get_config_defaults(&afec_temp_sensor_cfg);
+	afec_temp_sensor_set_config(AFEC0, &afec_temp_sensor_cfg);
+
+	/* Selecina canal e inicializa conversão */
+	afec_channel_enable(AFEC0, AFEC_CHANNEL_SENSOR);
+}
 static void configure_lcd(void){
 	/* Initialize display parameter */
 	g_ili9488_display_opt.ul_width = ILI9488_LCD_WIDTH;
@@ -416,9 +491,11 @@ void task_lcd(void){
   
   draw_screen();
   font_draw_text(&digital52, "HH:MM", 0, 0, 1); 
-  ili9488_draw_pixmap(170,360, ar.width, ar.height, ar.data);
+  font_draw_text(&digital52, "15", 45, 360, 1); 
+  font_draw_text(&digital52, "100%", 190, 360, 1); 
+  ili9488_draw_pixmap(100,360, ar.width, ar.height, ar.data);
   ili9488_draw_pixmap(200,20, soneca.width, soneca.height, soneca.data);
-  ili9488_draw_pixmap(30,360, termometro.width, termometro.height, termometro.data);
+  ili9488_draw_pixmap(0,360, termometro.width, termometro.height, termometro.data);
 
   draw_button(0);
   touchData touch;
