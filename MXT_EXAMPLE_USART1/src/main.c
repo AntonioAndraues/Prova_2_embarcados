@@ -91,9 +91,11 @@
 #include "conf_board.h"
 #include "conf_example.h"
 #include "conf_uart_serial.h"
+#include "tfont.h" 
 #include "soneca.h"
 #include "termometro.h"
 #include "ar.h"
+#include "digital521.h"
 
 
 /************************************************************************/
@@ -122,12 +124,7 @@ typedef struct {
   uint y;
 } touchData;
 
-typedef struct {
-	const uint8_t *data;
-	uint16_t width;
-	uint16_t height;
-	uint8_t dataSize;
-} tImage;
+
 QueueHandle_t xQueueTouch;
 
 /************************************************************************/
@@ -330,7 +327,31 @@ void update_screen(uint32_t tx, uint32_t ty) {
 		}
 	}
 }
+void font_draw_text(tFont *font, const char *text, int x, int y, int spacing) {
 
+	char *p = text;
+
+	while(*p != NULL) {
+
+		char letter = *p;
+
+		int letter_offset = letter - font->start_char;
+
+		if(letter <= font->end_char) {
+
+			tChar *current_char = font->chars + letter_offset;
+
+			ili9488_draw_pixmap(x, y, current_char->image->width, current_char->image->height, current_char->image->data);
+
+			x += current_char->image->width + spacing;
+
+		}
+
+		p++;
+
+	}
+
+}
 void mxt_handler(struct mxt_device *device, uint *x, uint *y)
 {
 	/* USART tx buffer initialized to 0 */
@@ -375,6 +396,7 @@ void task_mxt(void){
   
   	struct mxt_device device; /* Device data container */
   	mxt_init(&device);       	/* Initialize the mXT touch device */
+	
     touchData touch;          /* touch queue data type*/
     
   	while (true) {  
@@ -393,6 +415,11 @@ void task_lcd(void){
 	configure_lcd();
   
   draw_screen();
+  font_draw_text(&digital52, "HH:MM", 0, 0, 1); 
+  ili9488_draw_pixmap(170,360, ar.width, ar.height, ar.data);
+  ili9488_draw_pixmap(200,20, soneca.width, soneca.height, soneca.data);
+  ili9488_draw_pixmap(30,360, termometro.width, termometro.height, termometro.data);
+
   draw_button(0);
   touchData touch;
     
@@ -420,7 +447,6 @@ int main(void)
 
 	sysclk_init(); /* Initialize system clocks */
 	board_init();  /* Initialize board */
-	
 	/* Initialize stdio on USART */
 	stdio_serial_init(USART_SERIAL_EXAMPLE, &usart_serial_options);
 		
