@@ -130,7 +130,16 @@ const uint32_t BUTTON_Y = ILI9488_LCD_HEIGHT/2;
 #define PWM_FREQUENCY      1000
 /** Period value of PWM output waveform */
 #define PERIOD_VALUE       100
+/*OLED DEFINE*/
+#define button_1 PIOD
+#define button_1_ID ID_PIOD
+#define button_1_IDX	28u
+#define button_1_IDX_MASK (1 << button_1_IDX)
 
+#define button_2 PIOA
+#define button_2_ID ID_PIOA
+#define button_2_IDX	19u
+#define button_2_IDX_MASK (1 << button_2_IDX)
 
 /** The conversion data is done flag */
 volatile bool g_is_conversion_done = false;
@@ -145,6 +154,11 @@ typedef struct {
 
 pwm_channel_t g_pwm_channel_led;
 QueueHandle_t xQueueTouch;
+
+SemaphoreHandle_t xSemaphore;
+
+SemaphoreHandle_t xSemaphore2;
+volatile int temperatura;
 
 /************************************************************************/
 /* RTOS hooks                                                           */
@@ -191,9 +205,55 @@ extern void vApplicationMallocFailedHook(void)
 	configASSERT( ( volatile void * ) NULL );
 }
 
+static void but1_callback(void){
+	
+	printf("but1_callback \n");
+
+}
+static void but2_callback(void){
+	printf("but2_callback \n");
+	
+}
 /************************************************************************/
 /* init                                                                 */
 /************************************************************************/
+void io_init(void)
+{
+	// Inicializa clock do periférico PIO responsavel pelo botao
+	pmc_enable_periph_clk(button_1_ID);
+	pmc_enable_periph_clk(button_2_ID);
+
+	// Configura PIO para lidar com o pino do botão como entrada
+	// com pull-up
+	pio_configure(button_1, PIO_INPUT, button_1_IDX_MASK, PIO_PULLUP | PIO_DEBOUNCE);
+	pio_configure(button_2, PIO_INPUT, button_2_IDX_MASK, PIO_PULLUP | PIO_DEBOUNCE);
+
+	// Configura interrupção no pino referente ao botao e associa
+	// função de callback caso uma interrupção for gerada
+	// a função de callback é a: but_callback()
+	pio_handler_set(button_1,
+	button_1_ID,
+	button_1_IDX_MASK,
+	PIO_IT_FALL_EDGE,
+	but1_callback);
+	
+	pio_handler_set(button_2,
+	button_2_ID,
+	button_2_IDX_MASK,
+	PIO_IT_FALL_EDGE,
+	but2_callback);
+
+	// Ativa interrupção
+	pio_enable_interrupt(button_1, button_1_IDX_MASK);
+	pio_enable_interrupt(button_2, button_2_IDX_MASK);
+
+	// Configura NVIC para receber interrupcoes do PIO do botao
+	// com prioridade 4 (quanto mais próximo de 0 maior)
+	NVIC_EnableIRQ(button_1_ID);
+	NVIC_SetPriority(button_1_ID, 5); // Prioridade 4
+	NVIC_EnableIRQ(button_2_ID);
+	NVIC_SetPriority(button_2_ID, 5); // Prioridade 4
+}
 void PWM0_init(uint channel, uint duty){
 	/* Enable PWM peripheral clock */
 	pmc_enable_periph_clk(ID_PWM0);
@@ -228,13 +288,14 @@ void PWM0_init(uint channel, uint duty){
 	pwm_channel_enable(PWM0, channel);
 }
 
+
 static void AFEC_Temp_callback(void)
 {
 	g_ul_value = afec_channel_get_value(AFEC0, AFEC_CHANNEL_SENSOR);
 	g_is_conversion_done = true;
 }
 static int32_t convert_adc_to_temp(int32_t ADC_value){
-
+	//FALTA FAZER - CONVERSAO E TESTE - REGRA DE 3 
   int32_t ul_vol;
   int32_t ul_temp;
 
@@ -513,9 +574,10 @@ void task_get_temp(void){
   for (;;) {
 	  
 	  g_ul_value = afec_channel_get_value(AFEC0, AFEC_CHANNEL_SENSOR);
-	  g_ul_value=convert_adc_to_temp(g_ul_value);
-	  printf(g_ul_value);
-	  font_draw_text(&digital52, g_ul_value, 45, 360, 1); 
+	  temperatura=convert_adc_to_temp(g_ul_value);
+	  printf(temperatura);
+	  font_draw_text(&digital52, temperatura, 45, 360, 1); 
+	  // FALTA FAZER - CHAMAR O TASK PARA POTENCIA
 	  vTaskDelay(xDelay);
   }
   	
@@ -577,6 +639,7 @@ void task_lcd(void){
   }	 
 }
 
+
 /************************************************************************/
 /* main                                                                 */
 /************************************************************************/
@@ -593,12 +656,16 @@ int main(void)
 
 	sysclk_init(); /* Initialize system clocks */
 	board_init();  /* Initialize board */
+		stdio_serial_init(USART_SERIAL_EXAMPLE, &usart_serial_options);
+		io_init();
+		
+		
 	/* inicializa e configura adc */
 	//config_ADC_TEMP();
 	/* incializa conversão ADC */
 	//afec_start_software_conversion(AFEC0);
 	/* Initialize stdio on USART */
-	stdio_serial_init(USART_SERIAL_EXAMPLE, &usart_serial_options);
+
 	pmc_enable_periph_clk(ID_PIO_PWM_0);
 	pio_set_peripheral(PIO_PWM_0, PIO_PERIPH_A, MASK_PIN_PWM_0 );
 	
@@ -628,3 +695,4 @@ int main(void)
 
 	return 0;
 }
+
